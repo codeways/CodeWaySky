@@ -20,9 +20,19 @@ import org.junit.runners.Parameterized.Parameters;
 /**
  * Simulates the judge.
  * How to use this class:
- * 	1. Add junit-4.11.jar and hamcrest-core-1.3.jar as library to your project (if not already done)
- *  2. Copy the test files (xxx.in/yyy.out) into the project root (or make them available in the classpath)
- *  3. Run the test (In Eclipse: Right click on this file -> Run As -> JUnit Test)
+ * <ol>
+ * 	<li>Add junit-4.11.jar and hamcrest-core-1.3.jar as library to your project (if not already done)</li>
+ *  <li>Copy the test files (xxx.in/yyy.out) into the project root</li>
+ *  <li>Run the test (In Eclipse: Right click on this file -> Run As -> JUnit Test)</li>
+ * </ol>
+ * 
+ * Note that in order to add better visual support when a test case fails, I had to make a few assumptions 
+ * about the structure of the input/output set. If these assumptions don't hold, the result may be unexpected.
+ * <ul>
+ * 	<li>The first line of any input set ALWAYS indicates the total number of tests to process</li>
+ * 	<li>The total number of input lines is linear with the total number of tests</li>
+ * 	<li>The total number of output lines is linear with the total number of tests</li>
+ * </ul>
  *  
  *  @author Sandro Felicioni
  */
@@ -34,7 +44,8 @@ public class Judge {
 	
 	private String inputFile;
 	private String outputFile;
-	private int outInRatio = -1;
+	private int estimatedOutLinesPerTest;
+	private int estimatedInLinesPerTest;
 
 	public Judge(String filename){
 		this.inputFile = filename + IN_EXT;
@@ -65,19 +76,28 @@ public class Judge {
 		Scanner outputScanner = new Scanner(new ByteArrayInputStream(baos.toByteArray()));
 		
 		System.out.println(inputScanner.nextLine());
-		while(inputScanner.hasNextLine()){
-			System.out.println(inputScanner.nextLine());
+		validateEstimatedValues();
 
-			String expected = expectedOutputScanner.hasNextLine() ? expectedOutputScanner.nextLine() : null;
+		while(expectedOutputScanner.hasNextLine()){
+			
+			for(int i = 0; i < getEstimatedInLinesPerTest(); i++){
+				if(inputScanner.hasNext()) 
+					System.out.println(inputScanner.nextLine());
+			}
+
+			String expected = expectedOutputScanner.nextLine();
 			String actual = outputScanner.hasNextLine() ? outputScanner.nextLine() : null;
 			
-			for(int i = 1; i < getOutInRatio(); i++){
+			for(int i = 1; i < getEstimatedOutLinesPerTest(); i++){
 				expected += " \\n " + (expectedOutputScanner.hasNextLine() ? expectedOutputScanner.nextLine() : null);
 				actual += " \\n " + (outputScanner.hasNextLine() ? outputScanner.nextLine() : null);
 			}
 
 			if(!equals(expected, actual))
 				System.err.format("You failed: expected: <%s>, but was: <%s>%n%n", expected, actual);
+			else if(getEstimatedInLinesPerTest() <= 0) // in case the input is omitted, we print the output
+				System.out.println(actual);
+			
 			
 			String wrappedExpected = expected.replaceAll(" \\\\n ", System.getProperty("line.separator"));
 			String wrappedActual = actual.replaceAll(" \\\\n ", System.getProperty("line.separator"));
@@ -95,31 +115,72 @@ public class Judge {
 	
 	
 	/**
-	 * Gets the ratio of output lines per input lines (1:1 or 2:1 etc.) Why is this required? 
-	 * It may occur that for one single input line, two or more output lines have to be written. 
+	 * Estimates k = the number of output lines per test. (1:1 or 2:1 etc.). Why is this required? 
+	 * It may occur that for one single test, two or more output lines have to be written. 
 	 * Therefore in order to show assertion errors at the correct position, it may be necessary to 
 	 * compare multiple output lines in a single assertion.
 	 * 
-	 * @return The number of output lines, which have to be compared for one input line.
+	 * @return -1 if the #outputLinesPerTest could NOT be estimated, and k otherwise, but never 0.
 	 * @throws IOException 
 	 */
-	public int getOutInRatio() throws IOException{
-		if(outInRatio != -1) 
-			return outInRatio;
+	public int getEstimatedOutLinesPerTest() throws IOException{
+		if(estimatedOutLinesPerTest != 0) 
+			return estimatedOutLinesPerTest;
 		
-		LineNumberReader  inReader = new LineNumberReader(new FileReader(new File(inputFile)));
-		while(inReader.skip(Long.MAX_VALUE) > 0);
-		inReader.close();
+		Scanner scanner = new Scanner(new File(inputFile));
+		int numberOfTests = scanner.nextInt(); // we assume the first line ALWAYS indicates the number of tests
+		scanner.close();
 		
 		LineNumberReader outReader = new LineNumberReader(new FileReader(new File(outputFile)));
 		while(outReader.skip(Long.MAX_VALUE) > 0);
 		outReader.close();
 		
-		int inputlines = inReader.getLineNumber() - 1; // -1, first line = number of test cases within file
-		int outputLines = outReader.getLineNumber();
+		// strategy: if (#totalOutputLines = k * #numberOfTests) => k output lines per test
+		int totalInputLines = outReader.getLineNumber();
+		if(totalInputLines % numberOfTests == 0){
+			return estimatedOutLinesPerTest = totalInputLines / numberOfTests;
+		}
 		
-		return outputLines / inputlines;
+		// we give up...
+		return -1;
 	}
+	
+	
+	/**
+	 * Estimates k = the number of input lines per test.
+	 * 
+	 * @return -1 if the #inputLinesPerTest could NOT be estimated, and k otherwise, but never 0.
+	 * @throws IOException
+	 */
+	public int getEstimatedInLinesPerTest() throws IOException{
+		if(estimatedInLinesPerTest != 0)
+			return estimatedInLinesPerTest;
+		
+		LineNumberReader inReader = new LineNumberReader(new FileReader(new File(inputFile)));
+		int numberOfTests = Integer.valueOf(inReader.readLine()); // we assume the first line ALWAYS indicates the number of tests
+		while(inReader.skip(Long.MAX_VALUE) > 0);
+		inReader.close();
+		int totalInputLines = inReader.getLineNumber() -1; // -1, first line = #numberOfTests
+		
+		// strategy: if (#totalInputLines = k * #numberOfTests) => k input lines per test 
+		if(totalInputLines % numberOfTests == 0){
+			return estimatedInLinesPerTest = totalInputLines / numberOfTests;
+		}
+		
+		// we give up...
+		return estimatedInLinesPerTest = -1;
+	}
+	
+	private void validateEstimatedValues() throws IOException{
+		if(getEstimatedInLinesPerTest() <= 0){
+			System.err.println("We failed to estimate the number of input lines per test and therefore are unalbe to stop at the right position.");
+			System.err.println("Therefore we will omit the input and instead print and compare the output!");
+		}
+		if(getEstimatedOutLinesPerTest() <= 0){
+			System.err.println("We failed to estimate the number of output lines per test and therefore are unalbe to compare multiple lines at once.");
+			System.err.println("Therefore we will compare each line of the ouput separately!");
+		}		
+	}	
 	
 	/**
 	 * Dynamically adds a JUnit test for each test file.
